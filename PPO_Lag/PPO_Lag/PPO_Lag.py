@@ -10,7 +10,7 @@ from PPO_Lag.Common.Buffer import RolloutBuffer
 from PPO_Lag.Common.OnPolicyAlgorithm import OnPolicyAlgorithm
 from PPO_Lag.Common.Policises import SafeActorCriticPolicy, BasePolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
-from stable_baselines3.common.utils import explained_variance, get_schedule_fn
+from stable_baselines3.common.utils import explained_variance, get_schedule_fn, safe_mean
 
 
 class PPO_Lag(OnPolicyAlgorithm):
@@ -181,7 +181,6 @@ class PPO_Lag(OnPolicyAlgorithm):
         if self.clip_range_vf is not None:
             if isinstance(self.clip_range_vf, (float, int)):
                 assert self.clip_range_vf > 0, "`clip_range_vf` must be positive, " "pass `None` to deactivate vf clipping"
-
             self.clip_range_vf = get_schedule_fn(self.clip_range_vf)
 
     def train(self) -> None:
@@ -199,10 +198,20 @@ class PPO_Lag(OnPolicyAlgorithm):
             clip_range_vf = self.clip_range_vf(self._current_progress_remaining)  # type: ignore[operator]
 
         entropy_losses = []
-        pg_losses, value_losses = [], []
+        pg_losses, value_losses, c_value_losses = [], [], []
         clip_fractions = []
 
         continue_training = True
+
+        ep_cost_mean = safe_mean([ep_info["c"] for ep_info in self.ep_info_buffer])
+        # Penalty Loss, this term we will only care about it at the begining of the episode
+        penalty_loss = - self.policy.penalty_lambda * (ep_cost_mean - self.cost_lim)
+
+        # Optimization step
+        self.policy.lambda_optimizer.zero_grad()
+        penalty_loss.backward()
+        self.policy.lambda_optimizer.step()
+
         # train for n_epochs epochs
         for epoch in range(self.n_epochs):
             approx_kl_divs = []
@@ -222,22 +231,27 @@ class PPO_Lag(OnPolicyAlgorithm):
                 # Normalization does not make sense if mini batchsize == 1, see GH issue #325
                 if self.normalize_advantage and len(advantages) > 1:
                     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-                    c_advantages = th.nn.functional.normalize(c_advantages,dim=0)  # this the normalization method use baselines max|v|p, while the max of the advantaged value no greater than 1
+                    c_advantages = (c_advantages - c_advantages.mean()) / (c_advantages.std() + 1e-8)
 
                 # ratio between old and new policy, should be one at the first iteration
                 ratio = th.exp(log_prob - rollout_data.old_log_prob)
-
+                #print(c_advantages)
                 # clipped surrogate loss
                 policy_loss_1 = advantages * ratio
                 policy_loss_2 = advantages * th.clamp(ratio, 1 - clip_range, 1 + clip_range)
                 #policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
 
                 # clipped surrogate loss
-                surr_cost = th.mean(ratio * c_advantages) - c_advantages.mean()
+                #surr_cost = th.mean(ratio * c_advantages) - c_advantages.mean()
+                surr_cost = th.mean(ratio * c_advantages)
                 # surr_adv is very small while
                 surr_adv = th.min(policy_loss_1, policy_loss_2).mean()
+
+                #print(f"lag:{self.policy.penalty_lambda} surr_cost:{surr_cost}")
                 pi_objective = surr_adv - self.policy.penalty_lambda * surr_cost
+                #print(pi_objective)
                 pi_objective = pi_objective / (1 + self.policy.penalty_lambda)
+
                 policy_loss = - pi_objective
 
                 # Logging
@@ -262,6 +276,7 @@ class PPO_Lag(OnPolicyAlgorithm):
                 value_loss = f.mse_loss(rollout_data.returns, values_pred)
                 c_value_loss = f.mse_loss(rollout_data.c_returns, c_values_pred)
                 value_losses.append(value_loss.item())
+                c_value_losses.append(c_value_loss.item())
 
                 # Entropy loss favor exploration
                 if entropy is None:
@@ -303,9 +318,11 @@ class PPO_Lag(OnPolicyAlgorithm):
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())
 
         # Logs
+        self.logger.record("train/lagrange_multiplier", self.policy.penalty_lambda.item())
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
+        self.logger.record("train/c_value_losses", np.mean(c_value_losses))
         self.logger.record("train/approx_kl", np.mean(approx_kl_divs))
         self.logger.record("train/clip_fraction", np.mean(clip_fractions))
         self.logger.record("train/loss", loss.item())

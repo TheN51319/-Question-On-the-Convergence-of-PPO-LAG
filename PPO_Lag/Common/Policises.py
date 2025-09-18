@@ -543,14 +543,14 @@ class SafeActorCriticPolicy(BasePolicy):
         self.action_dist = make_proba_distribution(action_space, use_sde=use_sde, dist_kwargs=dist_kwargs)
 
         # Lagrangian method here
-        self.lag_lambda_param = th.tensor(0.5, requires_grad=True, device=self.device)
+        self.lag_lambda_param = th.tensor(0.001, requires_grad=True, device=self.device)
         self.c_value_net = nn.Sequential(
                                         nn.Linear(self.features_dim, self.net_arch_dim),
                                         nn.Tanh(),
                                         nn.Linear(self.net_arch_dim, self.net_arch_dim),
                                         nn.Tanh(),
                                         nn.Linear(self.net_arch_dim, 1),).to(self.device)
-        self.lambda_optimizer = self.optimizer_class([self.lag_lambda_param], lr=4e-3)
+        self.lambda_optimizer = self.optimizer_class([self.lag_lambda_param], lr=0.035)
 
 
         self._build(lr_schedule)
@@ -791,6 +791,6 @@ class SafeActorCriticPolicy(BasePolicy):
 
     @property
     def penalty_lambda(self):
-        return F.softplus(self.lag_lambda_param)
+        return F.relu(self.lag_lambda_param)
 
 

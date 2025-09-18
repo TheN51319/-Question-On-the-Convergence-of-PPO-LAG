@@ -291,7 +291,7 @@ class RolloutBuffer(BaseBuffer):
             last_c_gae_lam = c_delta + self.c_gamma * self.c_gae_lambda * next_non_terminal * last_c_gae_lam
 
             self.advantages[step] = last_gae_lam
-            #self.c_advantages[step] = last_c_gae_lam
+            self.c_advantages[step] = last_c_gae_lam
         # TD(lambda) estimator, see GitHub PR #375 or "Telescoping in TD(lambda)"
         # in David Silver Lecture 4: https://www.youtube.com/watch?v=PnHCvfgC_ZA
         self.returns = self.advantages + self.values
