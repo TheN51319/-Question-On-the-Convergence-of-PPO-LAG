@@ -12,6 +12,7 @@ import torch as th
 from gymnasium import spaces
 from torch import nn
 
+from PPO_Lag.Common.Lagrange import Lagrange
 from stable_baselines3.common.distributions import (
     BernoulliDistribution,
     CategoricalDistribution,
@@ -487,7 +488,6 @@ class SafeActorCriticPolicy(BasePolicy):
         )
 
         #网络结构
-        self.cost_lim = cost_lim
         self.net_arch_dim = net_arch_dim
 
         #TODO 自定义 来两个critic网络同等大小
@@ -543,14 +543,13 @@ class SafeActorCriticPolicy(BasePolicy):
         self.action_dist = make_proba_distribution(action_space, use_sde=use_sde, dist_kwargs=dist_kwargs)
 
         # Lagrangian method here
-        self.lag_lambda_param = th.tensor(0.001, requires_grad=True, device=self.device)
+        self.lagrange = Lagrange(cost_limit=cost_lim, lagrangian_multiplier_init=0.001, lagrangian_multiplier_lr=0.035)
         self.c_value_net = nn.Sequential(
                                         nn.Linear(self.features_dim, self.net_arch_dim),
                                         nn.Tanh(),
                                         nn.Linear(self.net_arch_dim, self.net_arch_dim),
                                         nn.Tanh(),
                                         nn.Linear(self.net_arch_dim, 1),).to(self.device)
-        self.lambda_optimizer = self.optimizer_class([self.lag_lambda_param], lr=0.035)
 
 
         self._build(lr_schedule)
@@ -789,8 +788,13 @@ class SafeActorCriticPolicy(BasePolicy):
         c_values = self.c_value_net(features)
         return self.value_net(latent_vf), c_values
 
-    @property
-    def penalty_lambda(self):
-        return F.relu(self.lag_lambda_param)
+
+    def lagrangian_multiplier(self):
+        return self.lagrange.lagrangian_multiplier
+
+    # @property
+    # def penalty_lambda(self):
+    #     print(f"self.lag_lambda_param:{self.lag_lambda_param} relu:{F.relu(self.lag_lambda_param)} ")
+    #     return F.relu(self.lag_lambda_param)
 
 

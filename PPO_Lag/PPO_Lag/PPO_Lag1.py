@@ -1,5 +1,4 @@
-#老的advantage计算
-
+#新的advantage计算
 import io
 import pathlib
 import os
@@ -20,7 +19,8 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.utils import explained_variance, get_schedule_fn, safe_mean
 
 
-class PPO_Lag(OnPolicyAlgorithm):
+
+class PPO_Lag1(OnPolicyAlgorithm):
     """
     Proximal Policy Optimization algorithm (PPO) (clip version)
 
@@ -243,28 +243,17 @@ class PPO_Lag(OnPolicyAlgorithm):
                     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
                     c_advantages = (c_advantages - c_advantages.mean()) / (c_advantages.std() + 1e-8)
 
-
+                #new advantages
+                advantages = advantages - self.policy.lagrangian_multiplier() * c_advantages
+                advantages /= (self.policy.lagrangian_multiplier() + 1)
 
                 # ratio between old and new policy, should be one at the first iteration
                 ratio = th.exp(log_prob - rollout_data.old_log_prob)
-                #print(c_advantages)
+
                 # clipped surrogate loss
                 policy_loss_1 = advantages * ratio
                 policy_loss_2 = advantages * th.clamp(ratio, 1 - clip_range, 1 + clip_range)
-                #policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
-
-                # clipped surrogate loss
-                #surr_cost = th.mean(ratio * c_advantages) - c_advantages.mean()
-                surr_cost = th.mean(ratio * c_advantages)
-                # surr_adv is very small while
-                surr_adv = th.min(policy_loss_1, policy_loss_2).mean()
-
-                #print(f"lag:{self.policy.penalty_lambda} surr_cost:{surr_cost}")
-                pi_objective = surr_adv - self.policy.lagrangian_multiplier() * surr_cost
-                #print(pi_objective)
-                pi_objective = pi_objective / (1 + self.policy.lagrangian_multiplier())
-
-                policy_loss = - pi_objective
+                policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
 
                 # Logging
                 pg_losses.append(policy_loss.item())
@@ -365,7 +354,6 @@ class PPO_Lag(OnPolicyAlgorithm):
             progress_bar=progress_bar,
         )
 
-
     def save(
         self,
         path: Union[str, pathlib.Path, io.BufferedIOBase],
@@ -373,4 +361,5 @@ class PPO_Lag(OnPolicyAlgorithm):
         include: Optional[Iterable[str]] = None,
     ) -> None:
         dir_part, file_part = os.path.split(path)
-        return super().save(path=os.path.join(dir_part, "ppolag-v0-" + file_part))
+        return super().save(path=os.path.join(dir_part,"ppolag-v1-"+file_part))
+
